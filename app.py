@@ -267,12 +267,18 @@ def get_rebalance_diagnostics(prices_df: pd.DataFrame, params: StrategyParams, p
         selected_date = valid_rebalance_dates[-1]
     
     # Get lookback returns and active assets
-    lookback_returns, active_assets = get_lookback_data(prices_df, selected_date, params.lookback_years)
-    
+    try:
+        lookback_returns, active_assets = get_lookback_data(prices_df, selected_date, params.lookback_years)
+    except ValueError:
+        return None
+        
+    N = len(active_assets)
+    if N < 2:
+        return None
+        
     # Empirical covariance and correlation
     cov_emp = lookback_returns.cov().values
     n_obs = len(lookback_returns)
-    N = len(active_assets)
     
     std = np.sqrt(np.diag(cov_emp))
     std_safe = np.where(std == 0, 1e-8, std)
