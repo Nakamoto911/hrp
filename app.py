@@ -904,8 +904,8 @@ with tab1:
             value_name='Weight'
         )
         
-        # Plot stacked area chart
-        fig_weights = px.area(
+        # Plot stacked bar chart
+        fig_weights = px.bar(
             weights_melted, 
             x='Date', 
             y='Weight', 
@@ -919,8 +919,55 @@ with tab1:
             yaxis_title="Weight (1.0 = 100%)",
             legend_title="Asset Universe",
             hovermode="x unified",
-            margin=dict(l=40, r=40, t=50, b=40)
+            margin=dict(l=40, r=40, t=50, b=40),
+            bargap=0.01
         )
+        
+        # Calculate dynamic bar width in milliseconds based on rebalance frequency to fill empty timeline space
+        if len(weights_raw_df) > 1:
+            diffs = pd.Series(weights_raw_df.index).diff().dropna()
+            median_diff_ms = diffs.median().total_seconds() * 1000
+            # Use 95% of the period to leave a very tiny visual gap
+            bar_width = median_diff_ms * 0.95
+        else:
+            bar_width = 90 * 24 * 60 * 60 * 1000
+            
+        fig_weights.update_traces(width=bar_width, selector=dict(type='bar'))
+        
+        # Map asset name to its trace color
+        asset_colors = {}
+        for trace in fig_weights.data:
+            if trace.name and hasattr(trace, 'marker') and getattr(trace.marker, 'color', None):
+                asset_colors[trace.name] = trace.marker.color
+
+        # Prepare sorted hover text list for each date with color indicators
+        hover_texts = []
+        for idx, row in weights_raw_df.iterrows():
+            row_clean = row.fillna(0.0)
+            sorted_items = sorted(row_clean.items(), key=lambda x: x[1], reverse=True)
+            lines = []
+            for name, val in sorted_items:
+                color = asset_colors.get(name, '#FFFFFF')
+                bullet = f'<span style="color:{color}; font-size:14px;">●</span>'
+                lines.append(f"{bullet} {name}: {val:.2%}")
+            hover_texts.append("<br>".join(lines))
+        
+        # Disable hover on the original area traces
+        for trace in fig_weights.data:
+            trace.hoverinfo = "skip"
+            trace.hovertemplate = None
+            
+        # Add transparent scatter trace for unified hover, displaying sorted weights
+        fig_weights.add_trace(go.Scatter(
+            x=weights_raw_df.index,
+            y=[1.0] * len(weights_raw_df),
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            marker=dict(color='rgba(0,0,0,0)', size=0),
+            showlegend=False,
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hover_texts,
+            name=""
+        ))
         st.plotly_chart(fig_weights, use_container_width=True)
     else:
         st.info("No weight history found in backtest diagnostics.")
