@@ -202,5 +202,27 @@ class TestHRPEngine(unittest.TestCase):
         # Let's verify that sf_diag does not error and returns reasonable shapes.
         self.assertGreater(hrp_diag['total_rebalance_events'], 0)
 
+    def test_semi_annually_rebalance_frequency(self):
+        """
+        Verify that the walk-forward backtester works seamlessly with 'semi-annually'
+        rebalancing frequency.
+        """
+        params = StrategyParams(
+            lookback_years=2,
+            rebalance_frequency='semi-annually',
+            linkage_method='single',
+            drift_threshold=0.015,
+            transaction_cost_bps=5.0,
+            french_pfu_rate=0.314
+        )
+        hrp_cum, hrp_diag, sp500_cum, sixty_forty_cum, sf_diag = run_strategy_backtest(
+            prices_df=self.prices_df,
+            params=params,
+            pool_name='etf',
+            initial_capital=100000.0
+        )
+        self.assertEqual(len(hrp_cum), len(sp500_cum))
+        self.assertGreater(hrp_diag['total_rebalance_events'], 0)
+
 if __name__ == '__main__':
     unittest.main()

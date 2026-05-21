@@ -38,7 +38,7 @@ def denoise_covariance(cov_emp: np.ndarray, n_obs: int) -> np.ndarray:
     # Isolate noise variance sigma^2 by finding the variance of eigenvalues <= 1.0
     eigenvalues_lte_1 = eigenvalues[eigenvalues <= 1.0]
     if len(eigenvalues_lte_1) > 0:
-        sigma2 = np.var(eigenvalues_lte_1)
+        sigma2 = np.mean(eigenvalues_lte_1)
     else:
         sigma2 = 1.0
         

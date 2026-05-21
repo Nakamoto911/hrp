@@ -18,6 +18,8 @@ def get_rebalance_dates(index: pd.DatetimeIndex, frequency: str) -> pd.DatetimeI
         return pd.DatetimeIndex(df.groupby([index.year, index.month]).last().values)
     elif frequency == 'quarterly':
         return pd.DatetimeIndex(df.groupby([index.year, (index.month - 1) // 3]).last().values)
+    elif frequency == 'semi-annually':
+        return pd.DatetimeIndex(df.groupby([index.year, (index.month - 1) // 6]).last().values)
     elif frequency == 'yearly':
         return pd.DatetimeIndex(df.groupby(index.year).last().values)
     else:
@@ -47,7 +49,8 @@ def run_strategy_backtest(
     params: StrategyParams, 
     pool_name: str,
     initial_capital: float = 100000.0,
-    limit_to_least_history: bool = False
+    limit_to_least_history: bool = False,
+    active_universe: List[str] = None
 ) -> Tuple[pd.Series, Dict, pd.Series, pd.Series, Dict]:
     """
     Runs the HRP backtest with Marchenko-Pastur denoising, drift bands, transaction costs, and PFU tax.
@@ -146,20 +149,27 @@ def run_strategy_backtest(
             
         prices_at_T_k = prices_clean.loc[T_k].to_dict()
         
-        # --- HRP REBALANCE ---
         # Get historical returns for covariance calculation
         lookback_returns, active_assets = get_lookback_data(prices_df, T_k, params.lookback_years)
+        
+        if active_universe is not None:
+            active_assets = [a for a in active_assets if a in active_universe]
+            lookback_returns = lookback_returns[active_assets]
         
         # Calculate empirical covariance
         cov_emp = lookback_returns.cov().values
         n_obs = len(lookback_returns)
         
-        # Denoise using Marchenko-Pastur
-        cov_denoised = denoise_covariance(cov_emp, n_obs)
+        # Denoise using Marchenko-Pastur if enabled
+        if getattr(params, 'denoise', True):
+            cov_denoised = denoise_covariance(cov_emp, n_obs)
+        else:
+            cov_denoised = cov_emp
         cov_denoised_df = pd.DataFrame(cov_denoised, index=active_assets, columns=active_assets)
         
         # Compute HRP target weights W*
-        w_star = optimize_hrp(cov_denoised_df, params.linkage_method)
+        bisection_method = getattr(params, 'bisection_method', 'tree')
+        w_star = optimize_hrp(cov_denoised_df, params.linkage_method, bisection_method)
         
         # Get current HRP portfolio value before trades
         hrp_v_prior = hrp_state.get_value(prices_at_T_k)

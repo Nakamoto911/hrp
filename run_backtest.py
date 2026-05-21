@@ -13,7 +13,7 @@ def main():
                         help="Asset pool to backtest: 'etf', 'mutual_fund', or 'european' (default: 'etf')")
     parser.add_argument("--lookback-years", type=int, default=4,
                         help="Lookback window in years for covariance matrix estimation (default: 4)")
-    parser.add_argument("--frequency", type=str, default="quarterly", choices=["daily", "monthly", "quarterly", "yearly"],
+    parser.add_argument("--frequency", type=str, default="quarterly", choices=["daily", "monthly", "quarterly", "semi-annually", "yearly"],
                         help="Rebalancing frequency (default: 'quarterly')")
     parser.add_argument("--linkage", type=str, default="single", choices=["single", "complete", "ward"],
                         help="Hierarchical clustering linkage method (default: 'single')")
@@ -29,6 +29,8 @@ def main():
                         help="File path to save the structured JSON chart output")
     parser.add_argument("--limit-history", action="store_true",
                         help="Limit backtest start date to the asset with the least history")
+    parser.add_argument("--bisection", type=str, default="tree", choices=["index", "tree"],
+                        help="Recursive bisection method: 'index' (original) or 'tree' (tree-based) (default: 'tree')")
     
     args = parser.parse_args()
     
@@ -39,7 +41,8 @@ def main():
         linkage_method=args.linkage,
         drift_threshold=args.drift_threshold,
         transaction_cost_bps=args.transaction_cost,
-        french_pfu_rate=args.pfu_rate
+        french_pfu_rate=args.pfu_rate,
+        bisection_method=args.bisection
     )
     
     # 1. Fetch data

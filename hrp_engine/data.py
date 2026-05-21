@@ -8,11 +8,11 @@ from typing import List, Tuple
 ETF_POOL = ['IVV', 'IJH', 'IWM', 'EFA', 'EEM', 'AGG', 'SPTL', 'HYG', 'SPBO', 'IYR', 'DBC', 'GLD']
 MUTUAL_FUND_POOL = ['^SP500TR', 'VIMSX', 'NAESX', 'FDIVX', 'VEIEX', 'VBMFX', 'VUSTX', 'VWEHX', 'VWESX', 'FRESX', '^SPGSCI', 'GC=F']
 EUROPEAN_POOL = [
-    'SXR8.DE', 'EXX5.DE', 'EXS1.DE', 'SXRT.DE', 'IS3N.DE',
-    'IUSM.DE', 'IS0L.DE', 'XJSE.DE', 'IGLT.L',
+    'SXR8.DE', 'SXRZ.DE', 'SXRW.DE', 'SXRT.DE', 'IS3N.DE',
+    'IUSM.DE', 'IS0L.DE', 'XJSE.DE', 'IGLT.MI',
     'IBCQ.DE', 'IHYG.MI',
     '4GLD.DE', 'CRUD.MI', 'COPA.MI', 'AIGP.MI',
-    '5MVW.DE', '36BZ.DE', 'QDVB.DE', 'IUS3.DE',
+    'IS3S.DE', 'IS3R.DE', 'IS3Q.DE', 'IQQ0.DE',
     'BTCE.DE'
 ]
 
@@ -70,6 +70,44 @@ def generate_synthetic_prices(tickers: List[str], start_date: str, end_date: str
             
     return df
 
+def clean_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Applies data cleaning to the price series:
+    1. Trims initial flat price segment by setting it to NaN.
+    2. Applies a 3-day rolling median filter to eliminate single-day bad ticks/spikes.
+    """
+    df_clean = df.copy()
+    for col in df_clean.columns:
+        series = df_clean[col].copy()
+        
+        # 1. Trim initial flat price segment
+        first_valid = series.first_valid_index()
+        if first_valid is not None:
+            non_nan_series = series.loc[first_valid:]
+            first_val = non_nan_series.iloc[0]
+            # Find the first index where the price is not equal to first_val
+            diff_mask = non_nan_series != first_val
+            if diff_mask.any():
+                first_change = diff_mask.idxmax()
+                # Count flat days
+                flat_days = len(non_nan_series.loc[:first_change]) - 1
+                # If flat for more than 1 day (i.e. at least 2 days), trim it
+                if flat_days > 1:
+                    series.loc[series.index < first_change] = np.nan
+            else:
+                # The series is entirely flat, set all to NaN
+                series.loc[:] = np.nan
+                
+        # 2. Apply 3-day rolling median filter on the non-NaN part to preserve original NaNs
+        if series.notna().sum() > 5:
+            valid_idx = series.dropna().index
+            valid_series = series.loc[valid_idx]
+            cleaned_valid = valid_series.rolling(window=3, min_periods=1, center=True).median()
+            series.loc[valid_idx] = cleaned_valid
+            
+        df_clean[col] = series
+    return df_clean
+
 def fetch_data(pool_name: str, cache_dir: str = 'cache', force_refresh: bool = False) -> pd.DataFrame:
     """
     Downloads daily price series for a pool, caches them to a CSV file.
@@ -92,7 +130,7 @@ def fetch_data(pool_name: str, cache_dir: str = 'cache', force_refresh: bool = F
             df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
             # Ensure all tickers are present
             if all(t in df.columns for t in tickers):
-                return df
+                return clean_prices(df)
         except Exception:
             pass
             
@@ -115,12 +153,12 @@ def fetch_data(pool_name: str, cache_dir: str = 'cache', force_refresh: bool = F
         # Save to cache
         df.to_csv(cache_path)
         print(f"Data saved to {cache_path}. Shape: {df.shape}")
-        return df
+        return clean_prices(df)
     except Exception as e:
         print(f"Error downloading data: {e}. Generating realistic synthetic data instead.")
         df = generate_synthetic_prices(tickers, start_date, end_date)
         df.to_csv(cache_path)
-        return df
+        return clean_prices(df)
 
 def get_lookback_data(prices_df: pd.DataFrame, rebalance_date: pd.Timestamp, lookback_years: int) -> Tuple[pd.DataFrame, List[str]]:
     """
@@ -140,8 +178,9 @@ def get_lookback_data(prices_df: pd.DataFrame, rebalance_date: pd.Timestamp, loo
         valid_count = series.notna().sum()
         total_count = len(series)
         if total_count > 0 and (valid_count / total_count) >= 0.8:
-            # Check if current price is valid
-            if not pd.isna(series.iloc[-1]):
+            # Check if current price is valid (using forward fill to handle holiday mismatches across exchanges)
+            ffilled_series = prices_df[col].loc[:rebalance_date].ffill()
+            if len(ffilled_series) > 0 and not pd.isna(ffilled_series.iloc[-1]):
                 active_assets.append(col)
                 
     if not active_assets:

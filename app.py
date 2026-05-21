@@ -51,24 +51,24 @@ ASSET_NAMES = {
     'GC=F': 'Gold (GC=F)',
     # European Investable Pool
     'SXR8.DE': 'S&P 500 (SXR8.DE)',
-    'EXX5.DE': 'Nikkei 225 (EXX5.DE)',
-    'EXS1.DE': 'FTSE 100 (EXS1.DE)',
+    'SXRZ.DE': 'Nikkei 225 (SXRZ.DE)',
+    'SXRW.DE': 'FTSE 100 (SXRW.DE)',
     'SXRT.DE': 'EuroSTOXX 50 (SXRT.DE)',
     'IS3N.DE': 'MSCI EM (IS3N.DE)',
     'IUSM.DE': 'US 10Y Treasuries (IUSM.DE)',
     'IS0L.DE': 'Bund Allemand (IS0L.DE)',
     'XJSE.DE': 'JGB Japonais (XJSE.DE)',
-    'IGLT.L': 'U.K. Gilts (IGLT.L)',
+    'IGLT.MI': 'U.K. Gilts (IGLT.MI)',
     'IBCQ.DE': 'Credit IG (IBCQ.DE)',
     'IHYG.MI': 'Credit HY (IHYG.MI)',
     '4GLD.DE': 'Gold (4GLD.DE)',
     'CRUD.MI': 'Oil (CRUD.MI)',
     'COPA.MI': 'Copper (COPA.MI)',
     'AIGP.MI': 'Agriculture (AIGP.MI)',
-    '5MVW.DE': 'Equity Value (5MVW.DE)',
-    '36BZ.DE': 'Equity Momentum (36BZ.DE)',
-    'QDVB.DE': 'Equity Quality (QDVB.DE)',
-    'IUS3.DE': 'Equity Defensive (IUS3.DE)',
+    'IS3S.DE': 'Equity Value (IS3S.DE)',
+    'IS3R.DE': 'Equity Momentum (IS3R.DE)',
+    'IS3Q.DE': 'Equity Quality (IS3Q.DE)',
+    'IQQ0.DE': 'Equity Defensive (IQQ0.DE)',
     'BTCE.DE': 'Bitcoin (BTCE.DE)'
 }
 
@@ -304,7 +304,7 @@ def get_rebalance_diagnostics(prices_df: pd.DataFrame, params: StrategyParams, p
     
     # Noise boundary lambda_max
     eigenvalues_lte_1 = eigenvalues[eigenvalues <= 1.0]
-    sigma2 = np.var(eigenvalues_lte_1) if len(eigenvalues_lte_1) > 0 else 1.0
+    sigma2 = np.mean(eigenvalues_lte_1) if len(eigenvalues_lte_1) > 0 else 1.0
     if sigma2 <= 0:
         sigma2 = 1e-8
     q = N / n_obs
@@ -322,14 +322,18 @@ def get_rebalance_diagnostics(prices_df: pd.DataFrame, params: StrategyParams, p
     Z = sch.linkage(condensed_dist, method=params.linkage_method)
     
     # Leaf ordering
-    from hrp_engine.hrp import get_quasi_diag, recursive_bisection
+    from hrp_engine.hrp import get_quasi_diag, recursive_bisection_index, recursive_bisection_tree
     ordered_indices = get_quasi_diag(Z)
     sort_items = [active_assets[i] for i in ordered_indices]
     
     # Weights comparison
     # 1. HRP weights
     cov_denoised_df = pd.DataFrame(cov_denoised, index=active_assets, columns=active_assets)
-    w_hrp = recursive_bisection(cov_denoised_df, sort_items)
+    bisection_method = getattr(params, 'bisection_method', 'tree')
+    if bisection_method == 'tree':
+        w_hrp = recursive_bisection_tree(cov_denoised_df, Z, active_assets)
+    else:
+        w_hrp = recursive_bisection_index(cov_denoised_df, sort_items)
     w_hrp = w_hrp.reindex(active_assets)
     
     # 2. Inverse-Variance weights (on denoised cov)
@@ -358,7 +362,7 @@ def get_rebalance_diagnostics(prices_df: pd.DataFrame, params: StrategyParams, p
 
 # Helper functions for parameter sensitivity sweeps
 def run_rebalance_frequency_sweep(prices_df, base_params, pool_name, initial_capital):
-    frequencies = ["weekly", "monthly", "quarterly", "yearly"]
+    frequencies = ["weekly", "monthly", "quarterly", "semi-annually", "yearly"]
     rows = []
     for freq in frequencies:
         params_sweep = replace(base_params, rebalance_frequency=freq)
@@ -463,7 +467,7 @@ lookback_years = st.sidebar.slider(
 
 rebalance_frequency = st.sidebar.selectbox(
     "Rebalance Frequency",
-    options=["monthly", "quarterly", "yearly"],
+    options=["monthly", "quarterly", "semi-annually", "yearly"],
     index=1,
     help="Frequency of portfolio reoptimizations."
 )
@@ -1077,7 +1081,7 @@ with tab7:
     if st.button("🔍 Run Parameter Sensitivity Sweep"):
         with st.spinner("Executing sensitivity backtests..."):
             st.markdown("#### 1. Rebalance Frequency Sensitivity")
-            st.markdown("Compare the performance of Weekly, Monthly, Quarterly, and Yearly rebalancing frequencies.")
+            st.markdown("Compare the performance of Weekly, Monthly, Quarterly, Semi-annually, and Yearly rebalancing frequencies.")
             freq_df = run_rebalance_frequency_sweep(prices_df, params_at, pool_key, initial_capital)
             st.table(freq_df)
             
