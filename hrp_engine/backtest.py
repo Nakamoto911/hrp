@@ -14,6 +14,8 @@ def get_rebalance_dates(index: pd.DatetimeIndex, frequency: str) -> pd.DatetimeI
     df = pd.Series(index, index=index)
     if frequency == 'daily':
         return index
+    elif frequency == 'weekly':
+        return pd.DatetimeIndex(df.groupby([index.isocalendar().year, index.isocalendar().week]).last().values)
     elif frequency == 'monthly':
         return pd.DatetimeIndex(df.groupby([index.year, index.month]).last().values)
     elif frequency == 'quarterly':

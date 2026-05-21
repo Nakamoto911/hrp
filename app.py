@@ -226,7 +226,7 @@ def compute_yearly_indicators(
             "Rebalances": rebalances
         })
         
-    return pd.DataFrame(yearly_rows).set_index("Year")
+    return pd.DataFrame(yearly_rows).set_index("Year").sort_index(ascending=False)
 
 @st.cache_data
 def precompute_all_rebalance_diagnostics(prices_df: pd.DataFrame, params: StrategyParams, pool_name: str):
@@ -368,7 +368,7 @@ def run_rebalance_frequency_sweep(prices_df, base_params, pool_name, initial_cap
         params_sweep = replace(base_params, rebalance_frequency=freq)
         try:
             hrp_cum, hrp_diag, _, _, _ = run_strategy_backtest(prices_df, params_sweep, pool_name, initial_capital)
-            metrics = compute_metrics(hrp_cum)
+            metrics = compute_metrics(hrp_cum, hrp_diag["total_friction_costs_paid"], params_sweep.transaction_cost_bps, initial_capital)
             final_wealth = initial_capital * hrp_cum.iloc[-1]
             rows.append({
                 "Rebalance Frequency": freq.capitalize(),
@@ -392,7 +392,7 @@ def run_linkage_sweep(prices_df, base_params, pool_name, initial_capital):
         params_sweep = replace(base_params, linkage_method=linkage)
         try:
             hrp_cum, hrp_diag, _, _, _ = run_strategy_backtest(prices_df, params_sweep, pool_name, initial_capital)
-            metrics = compute_metrics(hrp_cum)
+            metrics = compute_metrics(hrp_cum, hrp_diag["total_friction_costs_paid"], params_sweep.transaction_cost_bps, initial_capital)
             final_wealth = initial_capital * hrp_cum.iloc[-1]
             rows.append({
                 "Clustering Linkage": linkage.capitalize(),
@@ -416,7 +416,7 @@ def run_drift_band_sweep(prices_df, base_params, pool_name, initial_capital):
         params_sweep = replace(base_params, drift_threshold=threshold)
         try:
             hrp_cum, hrp_diag, _, _, _ = run_strategy_backtest(prices_df, params_sweep, pool_name, initial_capital)
-            metrics = compute_metrics(hrp_cum)
+            metrics = compute_metrics(hrp_cum, hrp_diag["total_friction_costs_paid"], params_sweep.transaction_cost_bps, initial_capital)
             final_wealth = initial_capital * hrp_cum.iloc[-1]
             rows.append({
                 "Drift Band Threshold": f"{threshold * 100.0:.1f}%",
@@ -432,6 +432,31 @@ def run_drift_band_sweep(prices_df, base_params, pool_name, initial_capital):
         except Exception as e:
             rows.append({"Drift Band Threshold": f"{threshold * 100.0:.1f}%", "Error": str(e)})
     return pd.DataFrame(rows).set_index("Drift Band Threshold")
+
+def run_lookback_years_sweep(prices_df, base_params, pool_name, initial_capital):
+    lookback_options = [1, 2, 3, 4, 5, 7, 10]
+    rows = []
+    for lb in lookback_options:
+        params_sweep = replace(base_params, lookback_years=lb)
+        try:
+            hrp_cum, hrp_diag, _, _, _ = run_strategy_backtest(prices_df, params_sweep, pool_name, initial_capital)
+            metrics = compute_metrics(hrp_cum, hrp_diag["total_friction_costs_paid"], params_sweep.transaction_cost_bps, initial_capital)
+            final_wealth = initial_capital * hrp_cum.iloc[-1]
+            rows.append({
+                "Lookback Window": f"{lb} Year{'s' if lb > 1 else ''}",
+                "Final Wealth (Net)": f"€{final_wealth:,.2f}",
+                "Ann. Return (Net)": f"{metrics['annualized_return']*100:.2f}%",
+                "Ann. Volatility": f"{metrics['annualized_volatility']*100:.2f}%",
+                "Sharpe (Net)": f"{metrics['sharpe_ratio']:.2f}",
+                "Sortino (Net)": f"{metrics['sortino_ratio']:.2f}",
+                "Max Drawdown": f"{metrics['max_drawdown']*100:.2f}%",
+                "Turnover": f"{metrics['annualized_turnover']*100:.2f}%",
+                "PFU Taxes Paid": f"€{hrp_diag['total_pfu_taxes_paid']:,.2f}"
+            })
+        except Exception as e:
+            rows.append({"Lookback Window": f"{lb} Year{'s' if lb > 1 else ''}", "Error": str(e)})
+    return pd.DataFrame(rows).set_index("Lookback Window")
+
 
 # Load Data (Cached to avoid yfinance rate limits and slow reads)
 @st.cache_data(show_spinner=False)
@@ -475,7 +500,7 @@ rebalance_frequency = st.sidebar.selectbox(
 linkage_method = st.sidebar.selectbox(
     "Clustering Linkage Method",
     options=["single", "complete", "average", "ward"],
-    index=0,
+    index=3,
     help="The linkage criteria for hierarchical clustering of assets."
 )
 
@@ -618,19 +643,32 @@ sixty_forty_final_wealth_at = initial_capital * sixty_forty_cum_at.iloc[-1]
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    # Final Wealth (After-Tax)
+    # Annualized Return (After-Tax)
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">Final Wealth (After-Tax)</div>
-        <div class="metric-value">€{hrp_final_wealth_at:,.0f}</div>
+        <div class="metric-title">Ann. Return (Net)</div>
+        <div class="metric-value">{hrp_metrics_at['annualized_return']*100:.2f}%</div>
         <div class="metric-delta">
-            SPY: <span class="delta-green">€{sp500_final_wealth:,.0f}</span> | 
-            60/40: <span class="delta-green">€{sixty_forty_final_wealth_at:,.0f}</span>
+            SPY: <span class="delta-green">{sp500_metrics_at['annualized_return']*100:.2f}%</span> | 
+            60/40: <span class="delta-green">{sixty_forty_metrics_at['annualized_return']*100:.2f}%</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 with col2:
+    # Annualized Volatility (After-Tax)
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-title">Ann. Volatility</div>
+        <div class="metric-value">{hrp_metrics_at['annualized_volatility']*100:.2f}%</div>
+        <div class="metric-delta">
+            SPY: <span class="delta-red">{sp500_metrics_at['annualized_volatility']*100:.2f}%</span> | 
+            60/40: <span class="delta-red">{sixty_forty_metrics_at['annualized_volatility']*100:.2f}%</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
     # Sharpe Ratio (After-Tax)
     st.markdown(f"""
     <div class="metric-card">
@@ -643,7 +681,7 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
-with col3:
+with col4:
     # Sortino Ratio (After-Tax)
     st.markdown(f"""
     <div class="metric-card">
@@ -652,19 +690,6 @@ with col3:
         <div class="metric-delta">
             SPY: <span class="delta-red">{sp500_metrics_at['sortino_ratio']:.2f}</span> | 
             60/40: <span class="delta-red">{sixty_forty_metrics_at['sortino_ratio']:.2f}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    # Annualized Return (After-Tax)
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Ann. Return (Net)</div>
-        <div class="metric-value">{hrp_metrics_at['annualized_return']*100:.2f}%</div>
-        <div class="metric-delta">
-            SPY: <span class="delta-green">{sp500_metrics_at['annualized_return']*100:.2f}%</span> | 
-            60/40: <span class="delta-green">{sixty_forty_metrics_at['annualized_return']*100:.2f}%</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -691,18 +716,15 @@ yearly_df = compute_yearly_indicators(
 )
 
 # Create tabs for charts and details
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-    "📈 Cumulative Equity Curves", 
-    "📉 Drawdown Profiles", 
-    "🍕 Weight Allocations", 
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Performance & Analytics", 
     "🔍 Asset Universe Signals",
-    "📊 Performance Table & Diagnostics",
-    "📅 Yearly Indicators Breakdown",
     "⚙️ Parameter Sensitivity",
     "🧠 Algorithmic Explainers & Impact"
 ])
 
 with tab1:
+    st.markdown("### 📈 Cumulative Equity Curves")
     # Chart 1: Cumulative Equity Curve (Before vs After Tax)
     fig_equity = go.Figure()
     
@@ -750,8 +772,91 @@ with tab1:
     )
     st.plotly_chart(fig_equity, use_container_width=True)
 
-with tab2:
+    st.markdown("---")
+
+    # Performance Table Comparison (Before vs After Tax)
+    st.markdown("### 📊 Performance Comparison Table")
+    
+    summary_data = {
+        "Metric": [
+            "Annualized Return (Before-Tax)",
+            "Annualized Return (After-Tax)",
+            "Annualized Volatility (After-Tax)",
+            "Sharpe Ratio (After-Tax)",
+            "Sortino Ratio (After-Tax)",
+            "Maximum Drawdown (After-Tax)",
+            "Annualized Turnover",
+            "Initial Wealth",
+            "Final Wealth (Before-Tax)",
+            "Final Wealth (After-Tax)",
+            "Total Capital Gains Taxes Paid"
+        ],
+        "HRP Denoised Strategy": [
+            f"{hrp_metrics_bt['annualized_return']*100:.2f}%",
+            f"{hrp_metrics_at['annualized_return']*100:.2f}%",
+            f"{hrp_metrics_at['annualized_volatility']*100:.2f}%",
+            f"{hrp_metrics_at['sharpe_ratio']:.2f}",
+            f"{hrp_metrics_at['sortino_ratio']:.2f}",
+            f"{hrp_metrics_at['max_drawdown']*100:.2f}%",
+            f"{hrp_metrics_at['annualized_turnover']*100:.2f}%",
+            f"€{initial_capital:,.2f}",
+            f"€{initial_capital * hrp_cum_bt.iloc[-1]:,.2f}",
+            f"€{initial_capital * hrp_cum_at.iloc[-1]:,.2f}",
+            f"€{hrp_diag_at['total_pfu_taxes_paid']:,.2f}"
+        ],
+        "S&P 500 Buy & Hold": [
+            f"{sp500_metrics_at['annualized_return']*100:.2f}%",
+            f"{sp500_metrics_at['annualized_return']*100:.2f}%",
+            f"{sp500_metrics_at['annualized_volatility']*100:.2f}%",
+            f"{sp500_metrics_at['sharpe_ratio']:.2f}",
+            f"{sp500_metrics_at['sortino_ratio']:.2f}",
+            f"{sp500_metrics_at['max_drawdown']*100:.2f}%",
+            "0.00%",
+            f"€{initial_capital:,.2f}",
+            f"€{sp500_final_wealth:,.2f}",
+            f"€{sp500_final_wealth:,.2f}",  # No rebalances = no taxes paid during period
+            "€0.00"
+        ],
+        "60/40 Equity/Bond": [
+            f"{sixty_forty_metrics_bt['annualized_return']*100:.2f}%",
+            f"{sixty_forty_metrics_at['annualized_return']*100:.2f}%",
+            f"{sixty_forty_metrics_at['annualized_volatility']*100:.2f}%",
+            f"{sixty_forty_metrics_at['sharpe_ratio']:.2f}",
+            f"{sixty_forty_metrics_at['sortino_ratio']:.2f}",
+            f"{sixty_forty_metrics_at['max_drawdown']*100:.2f}%",
+            f"{sixty_forty_metrics_at['annualized_turnover']*100:.2f}%",
+            f"€{initial_capital:,.2f}",
+            f"€{initial_capital * sixty_forty_cum_bt.iloc[-1]:,.2f}",
+            f"€{sixty_forty_final_wealth_at:,.2f}",
+            f"€{sf_diag_at['total_pfu_taxes_paid']:,.2f}"
+        ]
+    }
+    
+    st.table(pd.DataFrame(summary_data).set_index("Metric"))
+    
+    # Detailed Operational Diagnostics
+    st.markdown("### ⚙️ Operational Details")
+    
+    diag_col1, diag_col2 = st.columns(2)
+    with diag_col1:
+        st.markdown("**HRP Strategy Details**")
+        st.markdown(f"- **Total Rebalances**: {hrp_diag_at['total_rebalance_events']}")
+        st.markdown(f"- **Average Assets Traded per Rebalance**: {hrp_diag_at['average_assets_traded_per_event']:.2f}")
+        st.markdown(f"- **Total Friction Costs Paid**: {hrp_diag_at['total_friction_costs_paid']:,.2f} EUR")
+        st.markdown(f"- **Total PFU Taxes Paid (31.4%):**: {hrp_diag_at['total_pfu_taxes_paid']:,.2f} EUR")
+        st.markdown(f"- **Tax Drag (of total return)**: {hrp_diag_at['tax_drag_percentage_of_returns']*100:.2f}%")
+        st.markdown(f"- **Remaining Tax Loss Carryforward**: {hrp_diag_at['remaining_tax_loss_carryforward']:,.2f} EUR")
+        
+    with diag_col2:
+        st.markdown("**60/40 Benchmark Details**")
+        st.markdown(f"- **Total Friction Costs Paid**: {sf_diag_at['total_friction_costs_paid']:,.2f} EUR")
+        st.markdown(f"- **Total PFU Taxes Paid**: {sf_diag_at['total_pfu_taxes_paid']:,.2f} EUR")
+        st.markdown(f"- **Remaining Tax Loss Carryforward**: {sf_diag_at['remaining_tax_loss_carryforward']:,.2f} EUR")
+
+    st.markdown("---")
+
     # Chart 2: Drawdowns over time
+    st.markdown("### 📉 Drawdown Profiles")
     fig_dd = go.Figure()
     
     fig_dd.add_trace(go.Scatter(
@@ -781,8 +886,10 @@ with tab2:
     )
     st.plotly_chart(fig_dd, use_container_width=True)
 
-with tab3:
+    st.markdown("---")
+
     # Chart 3: Weight Allocations
+    st.markdown("### 🍕 Weight Allocations")
     if "weight_history" in hrp_diag_at and hrp_diag_at["weight_history"]:
         weights_raw_df = pd.DataFrame.from_dict(hrp_diag_at["weight_history"], orient='index')
         weights_raw_df.index = pd.to_datetime(weights_raw_df.index)
@@ -818,28 +925,29 @@ with tab3:
     else:
         st.info("No weight history found in backtest diagnostics.")
 
-with tab4:
+    st.markdown("---")
+
+    st.markdown("### 📅 Yearly Indicators Breakdown (HRP Denoised Strategy)")
+    st.markdown("This interactive table details the year-by-year financial and operational performance of the HRP portfolio.")
+    st.dataframe(yearly_df, use_container_width=True)
+
+with tab2:
     st.markdown("### 🔍 Asset Universe Signals")
     st.markdown("Analyze underlying asset prices, rolling volatility, and rolling yearly returns in raw value or standardized Z-score format.")
 
+    # Always analyze all assets in the selected pool
+    selected_assets = list(prices_df.columns)
+
     # Controls
-    signal_col1, signal_col2, signal_col3 = st.columns(3)
+    signal_col1, signal_col2 = st.columns(2)
     with signal_col1:
-        selected_assets = st.multiselect(
-            "Select Assets to Analyze:",
-            options=prices_df.columns,
-            default=list(prices_df.columns),
-            format_func=lambda x: ASSET_NAMES.get(x, x),
-            key="signals_assets_select"
-        )
-    with signal_col2:
         metric_choice = st.radio(
             "Select Metric:",
             options=["Asset Price", "Volatility", "Rolling Yearly Return"],
             horizontal=True,
             key="signals_metric_choice"
         )
-    with signal_col3:
+    with signal_col2:
         display_mode = st.radio(
             "Display Mode:",
             options=["Value", "Z-Score"],
@@ -965,9 +1073,9 @@ with tab4:
                     std_val = series.std()
                     
                     if not pd.isna(mean_val) and not pd.isna(std_val):
-                        fig_signals.add_hline(y=mean_val, line_dash="dash", line_color="#888888", line_width=1.5, row=row, col=1)
-                        fig_signals.add_hline(y=mean_val + std_val, line_dash="dot", line_color="#FF8F8F", line_width=1, row=row, col=1)
-                        fig_signals.add_hline(y=mean_val - std_val, line_dash="dot", line_color="#8F8FFF", line_width=1, row=row, col=1)
+                         fig_signals.add_hline(y=mean_val, line_dash="dash", line_color="#888888", line_width=1.5, row=row, col=1)
+                         fig_signals.add_hline(y=mean_val + std_val, line_dash="dot", line_color="#FF8F8F", line_width=1, row=row, col=1)
+                         fig_signals.add_hline(y=mean_val - std_val, line_dash="dot", line_color="#8F8FFF", line_width=1, row=row, col=1)
 
         # Style layout
         fig_signals.update_layout(
@@ -989,108 +1097,28 @@ with tab4:
             
         st.plotly_chart(fig_signals, use_container_width=True)
 
-with tab5:
-    # Performance Table Comparison (Before vs After Tax)
-    st.markdown("### Performance Comparison Table")
-    
-    summary_data = {
-        "Metric": [
-            "Initial Wealth",
-            "Final Wealth (Before-Tax)",
-            "Final Wealth (After-Tax)",
-            "Total Capital Gains Taxes Paid",
-            "Annualized Return (Before-Tax)",
-            "Annualized Return (After-Tax)",
-            "Annualized Volatility (After-Tax)",
-            "Sharpe Ratio (After-Tax)",
-            "Sortino Ratio (After-Tax)",
-            "Maximum Drawdown (After-Tax)",
-            "Annualized Turnover"
-        ],
-        "HRP Denoised Strategy": [
-            f"€{initial_capital:,.2f}",
-            f"€{initial_capital * hrp_cum_bt.iloc[-1]:,.2f}",
-            f"€{initial_capital * hrp_cum_at.iloc[-1]:,.2f}",
-            f"€{hrp_diag_at['total_pfu_taxes_paid']:,.2f}",
-            f"{hrp_metrics_bt['annualized_return']*100:.2f}%",
-            f"{hrp_metrics_at['annualized_return']*100:.2f}%",
-            f"{hrp_metrics_at['annualized_volatility']*100:.2f}%",
-            f"{hrp_metrics_at['sharpe_ratio']:.2f}",
-            f"{hrp_metrics_at['sortino_ratio']:.2f}",
-            f"{hrp_metrics_at['max_drawdown']*100:.2f}%",
-            f"{hrp_metrics_at['annualized_turnover']*100:.2f}%"
-        ],
-        "S&P 500 Buy & Hold": [
-            f"€{initial_capital:,.2f}",
-            f"€{sp500_final_wealth:,.2f}",
-            f"€{sp500_final_wealth:,.2f}",  # No rebalances = no taxes paid during period
-            "€0.00",
-            f"{sp500_metrics_at['annualized_return']*100:.2f}%",
-            f"{sp500_metrics_at['annualized_return']*100:.2f}%",
-            f"{sp500_metrics_at['annualized_volatility']*100:.2f}%",
-            f"{sp500_metrics_at['sharpe_ratio']:.2f}",
-            f"{sp500_metrics_at['sortino_ratio']:.2f}",
-            f"{sp500_metrics_at['max_drawdown']*100:.2f}%",
-            "0.00%"
-        ],
-        "60/40 Equity/Bond": [
-            f"€{initial_capital:,.2f}",
-            f"€{initial_capital * sixty_forty_cum_bt.iloc[-1]:,.2f}",
-            f"€{sixty_forty_final_wealth_at:,.2f}",
-            f"€{sf_diag_at['total_pfu_taxes_paid']:,.2f}",
-            f"{sixty_forty_metrics_bt['annualized_return']*100:.2f}%",
-            f"{sixty_forty_metrics_at['annualized_return']*100:.2f}%",
-            f"{sixty_forty_metrics_at['annualized_volatility']*100:.2f}%",
-            f"{sixty_forty_metrics_at['sharpe_ratio']:.2f}",
-            f"{sixty_forty_metrics_at['sortino_ratio']:.2f}",
-            f"{sixty_forty_metrics_at['max_drawdown']*100:.2f}%",
-            f"{sixty_forty_metrics_at['annualized_turnover']*100:.2f}%"
-        ]
-    }
-    
-    st.table(pd.DataFrame(summary_data).set_index("Metric"))
-    
-    # Detailed Operational Diagnostics
-    st.markdown("### Operational Details")
-    
-    diag_col1, diag_col2 = st.columns(2)
-    with diag_col1:
-        st.markdown("**HRP Strategy Details**")
-        st.markdown(f"- **Total Rebalances**: {hrp_diag_at['total_rebalance_events']}")
-        st.markdown(f"- **Average Assets Traded per Rebalance**: {hrp_diag_at['average_assets_traded_per_event']:.2f}")
-        st.markdown(f"- **Total Friction Costs Paid**: {hrp_diag_at['total_friction_costs_paid']:,.2f} EUR")
-        st.markdown(f"- **Total PFU Taxes Paid (31.4%):**: {hrp_diag_at['total_pfu_taxes_paid']:,.2f} EUR")
-        st.markdown(f"- **Tax Drag (of total return)**: {hrp_diag_at['tax_drag_percentage_of_returns']*100:.2f}%")
-        st.markdown(f"- **Remaining Tax Loss Carryforward**: {hrp_diag_at['remaining_tax_loss_carryforward']:,.2f} EUR")
-        
-    with diag_col2:
-        st.markdown("**60/40 Benchmark Details**")
-        st.markdown(f"- **Total Friction Costs Paid**: {sf_diag_at['total_friction_costs_paid']:,.2f} EUR")
-        st.markdown(f"- **Total PFU Taxes Paid**: {sf_diag_at['total_pfu_taxes_paid']:,.2f} EUR")
-        st.markdown(f"- **Remaining Tax Loss Carryforward**: {sf_diag_at['remaining_tax_loss_carryforward']:,.2f} EUR")
-
-with tab6:
-    st.markdown("### 📅 Yearly Indicators Breakdown (HRP Denoised Strategy)")
-    st.markdown("This interactive table details the year-by-year financial and operational performance of the HRP portfolio.")
-    st.dataframe(yearly_df, use_container_width=True)
-
-with tab7:
+with tab3:
     st.markdown("### ⚙️ Parameter Sensitivity Sweep")
     st.markdown("Evaluate how individual parameters affect final wealth, risk-adjusted performance, and operational cost parameters, holding other settings constant.")
     
     if st.button("🔍 Run Parameter Sensitivity Sweep"):
         with st.spinner("Executing sensitivity backtests..."):
-            st.markdown("#### 1. Rebalance Frequency Sensitivity")
+            st.markdown("#### 1. Lookback Window (Years) Sensitivity")
+            st.markdown("Compare lookback windows ranging from 1 year to 10 years used to estimate asset covariances.")
+            lookback_df = run_lookback_years_sweep(prices_df, params_at, pool_key, initial_capital)
+            st.table(lookback_df)
+            
+            st.markdown("#### 2. Rebalance Frequency Sensitivity")
             st.markdown("Compare the performance of Weekly, Monthly, Quarterly, Semi-annually, and Yearly rebalancing frequencies.")
             freq_df = run_rebalance_frequency_sweep(prices_df, params_at, pool_key, initial_capital)
             st.table(freq_df)
             
-            st.markdown("#### 2. Clustering Linkage Method Sensitivity")
+            st.markdown("#### 3. Clustering Linkage Method Sensitivity")
             st.markdown("Compare different agglomerative dendrogram linkage methods (`Single`, `Complete`, `Average`, `Ward`).")
             linkage_df = run_linkage_sweep(prices_df, params_at, pool_key, initial_capital)
             st.table(linkage_df)
             
-            st.markdown("#### 3. Drift Band Threshold Sensitivity")
+            st.markdown("#### 4. Drift Band Threshold Sensitivity")
             st.markdown("Compare drift band tolerance thresholds ranging from 0% (always rebalance) up to 10.0%.")
             drift_df = run_drift_band_sweep(prices_df, params_at, pool_key, initial_capital)
             st.table(drift_df)
@@ -1505,7 +1533,7 @@ def render_algo_explainer_fragment(prices_df, params_at, pool_key, lookback_year
         )
         st.plotly_chart(fig_drag, use_container_width=True)
 
-with tab8:
+with tab4:
     st.markdown("## 🧠 HRP Algorithmic Explanations & Impact")
     st.markdown("This interactive lab helps you understand the mathematics and real-world impact of the four key algorithms driving the Hierarchical Risk Parity engine.")
     render_algo_explainer_fragment(prices_df, params_at, pool_key, lookback_years, drift_threshold_pct, initial_capital, hrp_cum_at, hrp_diag_at)
@@ -1531,10 +1559,6 @@ with st.expander("📋 LLM-Shareable Report (Click to Copy)", expanded=False):
 ## 📊 Performance Comparison Table:
 | Metric | HRP Denoised Strategy | S&P 500 Buy & Hold | 60/40 Equity/Bond |
 | :--- | :---: | :---: | :---: |
-| Initial Wealth | €{initial_capital:,.2f} | €{initial_capital:,.2f} | €{initial_capital:,.2f} |
-| Final Wealth (Before-Tax) | €{initial_capital * hrp_cum_bt.iloc[-1]:,.2f} | €{sp500_final_wealth:,.2f} | €{initial_capital * sixty_forty_cum_bt.iloc[-1]:,.2f} |
-| Final Wealth (After-Tax) | €{hrp_final_wealth_at:,.2f} | €{sp500_final_wealth:,.2f} | €{sixty_forty_final_wealth_at:,.2f} |
-| Total Taxes Paid | €{hrp_diag_at['total_pfu_taxes_paid']:,.2f} | €0.00 | €{sf_diag_at['total_pfu_taxes_paid']:,.2f} |
 | Annualized Return (Before-Tax) | {hrp_metrics_bt['annualized_return']*100:.2f}% | {sp500_metrics_at['annualized_return']*100:.2f}% | {sixty_forty_metrics_bt['annualized_return']*100:.2f}% |
 | Annualized Return (After-Tax) | {hrp_metrics_at['annualized_return']*100:.2f}% | {sp500_metrics_at['annualized_return']*100:.2f}% | {sixty_forty_metrics_at['annualized_return']*100:.2f}% |
 | Annualized Volatility (After-Tax) | {hrp_metrics_at['annualized_volatility']*100:.2f}% | {sp500_metrics_at['annualized_volatility']*100:.2f}% | {sixty_forty_metrics_at['annualized_volatility']*100:.2f}% |
@@ -1542,6 +1566,10 @@ with st.expander("📋 LLM-Shareable Report (Click to Copy)", expanded=False):
 | Sortino Ratio (After-Tax) | {hrp_metrics_at['sortino_ratio']:.2f} | {sp500_metrics_at['sortino_ratio']:.2f} | {sixty_forty_metrics_at['sortino_ratio']:.2f} |
 | Maximum Drawdown (After-Tax) | {hrp_metrics_at['max_drawdown']*100:.2f}% | {sp500_metrics_at['max_drawdown']*100:.2f}% | {sixty_forty_metrics_at['max_drawdown']*100:.2f}% |
 | Annualized Turnover | {hrp_metrics_at['annualized_turnover']*100:.2f}% | 0.00% | {sixty_forty_metrics_at['annualized_turnover']*100:.2f}% |
+| Initial Wealth | €{initial_capital:,.2f} | €{initial_capital:,.2f} | €{initial_capital:,.2f} |
+| Final Wealth (Before-Tax) | €{initial_capital * hrp_cum_bt.iloc[-1]:,.2f} | €{sp500_final_wealth:,.2f} | €{initial_capital * sixty_forty_cum_bt.iloc[-1]:,.2f} |
+| Final Wealth (After-Tax) | €{hrp_final_wealth_at:,.2f} | €{sp500_final_wealth:,.2f} | €{sixty_forty_final_wealth_at:,.2f} |
+| Total Taxes Paid | €{hrp_diag_at['total_pfu_taxes_paid']:,.2f} | €0.00 | €{sf_diag_at['total_pfu_taxes_paid']:,.2f} |
 
 ## 🛠️ HRP Operational Diagnostics:
 - **Total Rebalances**: {hrp_diag_at['total_rebalance_events']}
