@@ -4,7 +4,7 @@
 This file serves as a chronological record of all quant experiments, debugging sessions, and parameter tuning for the Hierarchical Risk Parity (HRP) engine.
 - **Sort Order**: Always list entries in reverse-chronological order (newest at the top).
 - **Format**: Keep entries extremely short, highlighting the objective, key takeaways, changes, and final parameters/metrics.
-- **Detailed Data**: Do not include raw tables, logs, or proofs here. Save those details in the companion [experiment_details.md](file:///Users/user2/Documents/Code/hrp/experiment_details.md) file and link to it.
+- **Detailed Data**: Do not include raw tables, logs, or proofs here. Save those details in the companion [experiment_details.md](experiment_details.md) file and link to it.
 - **LLM Context**: When starting a new session or subagent, read this file first to understand the current best configuration and past failures.
 
 ---
@@ -41,4 +41,4 @@ Diagnose and resolve low returns (<1% annualized, 0.07 Sharpe) and incoherent al
 - **Maximum Drawdown**: Reduced from **-23.66% to -16.02%**.
 - **Annualized Turnover**: Reduced from **289.32% to 94.80%**.
 
-*For full comparison tables, parameter sweep details, and mathematical verification, see [experiment_details.md](file:///Users/user2/Documents/Code/hrp/experiment_details.md#experiment-2026-05-21).*
+*For full comparison tables, parameter sweep details, and mathematical verification, see [experiment_details.md](experiment_details.md#experiment-2026-05-21).*

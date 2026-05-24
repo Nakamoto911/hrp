@@ -1,6 +1,6 @@
 # HRP Backtest Experiment Details
 
-This document houses detailed data tables, parameter sensitivity statistics, mathematical audits, and code architecture summaries for experiments recorded in [memory.md](file:///Users/user2/Documents/Code/hrp/memory.md).
+This document houses detailed data tables, parameter sensitivity statistics, mathematical audits, and code architecture summaries for experiments recorded in [memory.md](memory.md).
 
 ---
 
